@@ -19,9 +19,11 @@ require (
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/fatih/color v1.7.0
-	github.com/golang/protobuf v1.3.2
-	github.com/google/go-cmp v0.3.0
+	github.com/golang/protobuf v1.3.5
+	github.com/google/go-cmp v0.4.0
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
+	github.com/gophercloud/gophercloud v0.11.0
+	github.com/gophercloud/utils v0.0.0-20200508015959-b0167b94122c
 	github.com/gotestyourself/gotestyourself v2.2.0+incompatible // indirect
 	github.com/goware/prefixer v0.0.0-20160118172347-395022866408
 	github.com/hashicorp/vault/api v1.0.4

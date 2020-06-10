@@ -16,6 +16,7 @@ import (
 
 	"go.mozilla.org/sops/v3"
 	"go.mozilla.org/sops/v3/azkv"
+	"go.mozilla.org/sops/v3/barbican"
 	"go.mozilla.org/sops/v3/gcpkms"
 	"go.mozilla.org/sops/v3/hcvault"
 	"go.mozilla.org/sops/v3/kms"
@@ -42,6 +43,7 @@ type Metadata struct {
 	GCPKMSKeys                []gcpkmskey `yaml:"gcp_kms" json:"gcp_kms"`
 	AzureKeyVaultKeys         []azkvkey   `yaml:"azure_kv" json:"azure_kv"`
 	VaultKeys                 []vaultkey  `yaml:"hc_vault" json:"hc_vault"`
+	BarbicanKeys              []barbicankey `yaml:"barbican" json:"barbican"`
 	LastModified              string      `yaml:"lastmodified" json:"lastmodified"`
 	MessageAuthenticationCode string      `yaml:"mac" json:"mac"`
 	PGPKeys                   []pgpkey    `yaml:"pgp" json:"pgp"`
@@ -53,11 +55,12 @@ type Metadata struct {
 }
 
 type keygroup struct {
-	PGPKeys           []pgpkey    `yaml:"pgp,omitempty" json:"pgp,omitempty"`
-	KMSKeys           []kmskey    `yaml:"kms,omitempty" json:"kms,omitempty"`
-	GCPKMSKeys        []gcpkmskey `yaml:"gcp_kms,omitempty" json:"gcp_kms,omitempty"`
-	AzureKeyVaultKeys []azkvkey   `yaml:"azure_kv,omitempty" json:"azure_kv,omitempty"`
-	VaultKeys         []vaultkey  `yaml:"hc_vault" json:"hc_vault"`
+	PGPKeys           []pgpkey      `yaml:"pgp,omitempty" json:"pgp,omitempty"`
+	KMSKeys           []kmskey      `yaml:"kms,omitempty" json:"kms,omitempty"`
+	GCPKMSKeys        []gcpkmskey   `yaml:"gcp_kms,omitempty" json:"gcp_kms,omitempty"`
+	AzureKeyVaultKeys []azkvkey     `yaml:"azure_kv,omitempty" json:"azure_kv,omitempty"`
+	VaultKeys         []vaultkey    `yaml:"hc_vault" json:"hc_vault"`
+	BarbicanKeys      []barbicankey `yaml:"barbican,omitempty" json:"barbican,omitempty"`
 }
 
 type pgpkey struct {
@@ -97,6 +100,12 @@ type azkvkey struct {
 	EncryptedDataKey string `yaml:"enc" json:"enc"`
 }
 
+type barbicankey struct {
+	SecretHref       string `yaml:"secret_href" json:"secret_href"`
+	CreatedAt        string `yaml:"created_at" json:"created_at"`
+	EncryptedDataKey string `yaml:"enc" json:"enc"`
+}
+
 // MetadataFromInternal converts an internal SOPS metadata representation to a representation appropriate for storage
 func MetadataFromInternal(sopsMetadata sops.Metadata) Metadata {
 	var m Metadata
@@ -115,6 +124,7 @@ func MetadataFromInternal(sopsMetadata sops.Metadata) Metadata {
 		m.GCPKMSKeys = gcpkmsKeysFromGroup(group)
 		m.VaultKeys = vaultKeysFromGroup(group)
 		m.AzureKeyVaultKeys = azkvKeysFromGroup(group)
+		m.BarbicanKeys = barbicanKeysFromGroup(group)
 	} else {
 		for _, group := range sopsMetadata.KeyGroups {
 			m.KeyGroups = append(m.KeyGroups, keygroup{
@@ -123,6 +133,7 @@ func MetadataFromInternal(sopsMetadata sops.Metadata) Metadata {
 				GCPKMSKeys:        gcpkmsKeysFromGroup(group),
 				VaultKeys:         vaultKeysFromGroup(group),
 				AzureKeyVaultKeys: azkvKeysFromGroup(group),
+				BarbicanKeys:      barbicanKeysFromGroup(group),
 			})
 		}
 	}
@@ -206,6 +217,20 @@ func azkvKeysFromGroup(group sops.KeyGroup) (keys []azkvkey) {
 	return
 }
 
+func barbicanKeysFromGroup(group sops.KeyGroup) (keys []barbicankey) {
+	for _, key := range group {
+		switch key := key.(type) {
+		case *barbican.MasterKey:
+			keys = append(keys, barbicankey{
+				SecretHref:       key.SecretHref,
+				CreatedAt:        key.CreationDate.Format(time.RFC3339),
+				EncryptedDataKey: key.EncryptedKey,
+			})
+		}
+	}
+	return
+}
+
 // ToInternal converts a storage-appropriate Metadata struct to a SOPS internal representation
 func (m *Metadata) ToInternal() (sops.Metadata, error) {
 	lastModified, err := time.Parse(time.RFC3339, m.LastModified)
@@ -251,7 +276,7 @@ func (m *Metadata) ToInternal() (sops.Metadata, error) {
 	}, nil
 }
 
-func internalGroupFrom(kmsKeys []kmskey, pgpKeys []pgpkey, gcpKmsKeys []gcpkmskey, azkvKeys []azkvkey, vaultKeys []vaultkey) (sops.KeyGroup, error) {
+func internalGroupFrom(kmsKeys []kmskey, pgpKeys []pgpkey, gcpKmsKeys []gcpkmskey, azkvKeys []azkvkey, vaultKeys []vaultkey, barbicanKeys []barbicankey) (sops.KeyGroup, error) {
 	var internalGroup sops.KeyGroup
 	for _, kmsKey := range kmsKeys {
 		k, err := kmsKey.toInternal()
@@ -281,6 +306,13 @@ func internalGroupFrom(kmsKeys []kmskey, pgpKeys []pgpkey, gcpKmsKeys []gcpkmske
 		}
 		internalGroup = append(internalGroup, k)
 	}
+	for _, barbicanKey := range barbicanKeys {
+		k, err := barbicanKey.toInternal()
+		if err != nil {
+			return nil, err
+		}
+		internalGroup = append(internalGroup, k)
+	}
 	for _, pgpKey := range pgpKeys {
 		k, err := pgpKey.toInternal()
 		if err != nil {
@@ -293,8 +325,8 @@ func internalGroupFrom(kmsKeys []kmskey, pgpKeys []pgpkey, gcpKmsKeys []gcpkmske
 
 func (m *Metadata) internalKeygroups() ([]sops.KeyGroup, error) {
 	var internalGroups []sops.KeyGroup
-	if len(m.PGPKeys) > 0 || len(m.KMSKeys) > 0 || len(m.GCPKMSKeys) > 0 || len(m.AzureKeyVaultKeys) > 0 || len(m.VaultKeys) > 0 {
-		internalGroup, err := internalGroupFrom(m.KMSKeys, m.PGPKeys, m.GCPKMSKeys, m.AzureKeyVaultKeys, m.VaultKeys)
+	if len(m.PGPKeys) > 0 || len(m.KMSKeys) > 0 || len(m.GCPKMSKeys) > 0 || len(m.AzureKeyVaultKeys) > 0 || len(m.VaultKeys) > 0 || len(m.BarbicanKeys) > 0 {
+		internalGroup, err := internalGroupFrom(m.KMSKeys, m.PGPKeys, m.GCPKMSKeys, m.AzureKeyVaultKeys, m.VaultKeys, m.BarbicanKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -302,7 +334,7 @@ func (m *Metadata) internalKeygroups() ([]sops.KeyGroup, error) {
 		return internalGroups, nil
 	} else if len(m.KeyGroups) > 0 {
 		for _, group := range m.KeyGroups {
-			internalGroup, err := internalGroupFrom(group.KMSKeys, group.PGPKeys, group.GCPKMSKeys, group.AzureKeyVaultKeys, group.VaultKeys)
+			internalGroup, err := internalGroupFrom(group.KMSKeys, group.PGPKeys, group.GCPKMSKeys, group.AzureKeyVaultKeys, group.VaultKeys, group.BarbicanKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -366,6 +398,18 @@ func (vaultKey *vaultkey) toInternal() (*hcvault.MasterKey, error) {
 		KeyName:      vaultKey.KeyName,
 		CreationDate: creationDate,
 		EncryptedKey: vaultKey.EncryptedDataKey,
+	}, nil
+}
+
+func (barbicanKey *barbicankey) toInternal() (*barbican.MasterKey, error) {
+	creationDate, err := time.Parse(time.RFC3339, barbicanKey.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &barbican.MasterKey{
+		SecretHref:   barbicanKey.SecretHref,
+		EncryptedKey: barbicanKey.EncryptedDataKey,
+		CreationDate: creationDate,
 	}, nil
 }
 

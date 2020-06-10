@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"go.mozilla.org/sops/v3/azkv"
+	"go.mozilla.org/sops/v3/barbican"
 	"go.mozilla.org/sops/v3/gcpkms"
 	"go.mozilla.org/sops/v3/hcvault"
 	"go.mozilla.org/sops/v3/keys"
@@ -66,6 +67,14 @@ func KeyFromMasterKey(mk keys.MasterKey) Key {
 					VaultUrl: mk.VaultURL,
 					Name:     mk.Name,
 					Version:  mk.Version,
+				},
+			},
+		}
+	case *barbican.MasterKey:
+		return Key{
+			KeyType: &Key_BarbicanKey{
+				BarbicanKey: &BarbicanKey{
+					SecretHref: mk.SecretHref,
 				},
 			},
 		}
